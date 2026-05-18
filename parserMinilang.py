@@ -1,6 +1,7 @@
 # =========================================
 # parserMinilang.py
 # MiniLang - Analizador Sintáctico Ascendente con PLY
+# Fase 3: ahora también construye AST para análisis semántico
 # =========================================
 
 import os
@@ -14,6 +15,8 @@ from Proyecto import Lexer
 
 tokens = (
     'IF', 'ELIF', 'ELSE', 'WHILE',
+    #Se agrego
+    'CONST',
     'INT_TYPE', 'FLOAT_TYPE', 'BOOL_TYPE', 'STRING_TYPE',
     'READ', 'WRITE', 'RETURN', 'FUNC',
     'BOOL', 'ID', 'INT', 'FLOAT', 'STRING',
@@ -76,11 +79,78 @@ class PlyTokenAdapter:
         tok.col_start = src.col_start
         tok.col_end = src.col_end
 
-        # Actualizar posición actual del lexer adaptado
         self.lineno = tok.lineno
         self.lexpos = tok.lexpos
 
         return tok
+
+
+# =========================================
+#Se agrego
+# NODOS PARA AST
+# El parser ahora devuelve una estructura del programa para Fase 3.
+# =========================================
+
+def make_node(node, line=None, col=None, **kwargs):
+    data = {
+        "node": node,
+        "line": line,
+        "col": col,
+    }
+    data.update(kwargs)
+    return data
+
+
+def token_line_col(p, index):
+    """
+    Obtiene línea y columna desde un símbolo terminal de PLY.
+    Se usa para guardar ubicación en los nodos del AST.
+    """
+    try:
+        tok = p.slice[index]
+        line = getattr(tok, "lineno", p.lineno(index))
+        col = getattr(tok, "col_start", getattr(tok, "lexpos", p.lexpos(index)))
+        return line, col
+    except Exception:
+        return "?", "?"
+
+
+def normalize_type(type_token):
+    """
+    Convierte tokens de tipo al nombre interno usado por el analizador semántico.
+    """
+    mapping = {
+        "INT_TYPE": "int",
+        "FLOAT_TYPE": "float",
+        "BOOL_TYPE": "bool",
+        "STRING_TYPE": "string",
+    }
+    return mapping.get(type_token, str(type_token))
+
+
+def normalize_literal(token_type, value):
+    """
+    Convierte literales del lexer a valor Python y tipo MiniLang.
+    """
+    if token_type == "INT":
+        try:
+            return int(value), "int"
+        except Exception:
+            return value, "int"
+
+    if token_type == "FLOAT":
+        try:
+            return float(value), "float"
+        except Exception:
+            return value, "float"
+
+    if token_type == "STRING":
+        return value, "string"
+
+    if token_type == "BOOL":
+        return str(value).lower() == "true", "bool"
+
+    return value, "unknown"
 
 
 # =========================================
@@ -143,6 +213,8 @@ def add_syntax_error(message, tok=None, line=None, col=None, symbol=None):
 # =========================================
 
 SIMPLE_STARTERS = {
+    #Se agrego
+    'CONST',
     'INT_TYPE', 'FLOAT_TYPE', 'BOOL_TYPE', 'STRING_TYPE',
     'ID', 'WRITE', 'READ', 'RETURN'
 }
@@ -158,7 +230,6 @@ BINARY_OPERATORS = {
 def get_lex_error_lines(errors):
     lines = set()
     for err in errors:
-        # Formato esperado: Línea X, columna Y, ...
         try:
             prefix = err.split(",", 1)[0]
             line = int(prefix.replace("Línea", "").strip())
@@ -242,8 +313,6 @@ def next_significant_token_after_line(tokens_list, newline_token):
         if tok.type == 'NEWLINE':
             index += 1
             continue
-        # Si aparece DEDENT antes de un token real, se busca el token real de esa línea
-        # para reportar un mensaje más claro.
         if tok.type == 'DEDENT':
             j = index + 1
             while j < len(tokens_list) and tokens_list[j].type in ('DEDENT', 'NEWLINE'):
@@ -275,7 +344,6 @@ def precheck_syntax(tokens_list, lexer_errors):
         if first is None:
             continue
 
-        # 1. Falta de ':' en encabezados de bloque.
         if first.type in ('IF', 'ELIF', 'WHILE', 'FUNC') and not line_has_type(line_tokens, 'COLON'):
             add_syntax_error("falta ':' al final del encabezado del bloque", newline)
             continue
@@ -284,33 +352,26 @@ def precheck_syntax(tokens_list, lexer_errors):
             add_syntax_error("falta ':' después de else", newline)
             continue
 
-        # 2. Paréntesis no cerrado.
         if has_unbalanced_parentheses(line_tokens):
             add_syntax_error("paréntesis no cerrado", newline)
             continue
 
-        # 3. Return sin valor.
         if first.type == 'RETURN':
             before_end, end_tok = get_token_before_semicolon_or_newline(line_tokens)
             if before_end.type == 'RETURN':
                 add_syntax_error("return requiere una expresión de retorno", end_tok)
                 continue
 
-        # 4. Expresión incompleta antes de ; o NEWLINE.
         before_end, end_tok = get_token_before_semicolon_or_newline(line_tokens)
         if before_end and before_end.type in BINARY_OPERATORS:
-            # En declaraciones/asignaciones esto detecta casos como: z = x + ;
             add_syntax_error("expresión incompleta", end_tok)
             continue
 
-        # 5. Falta de punto y coma en instrucciones simples.
-        # Si la línea ya tiene error léxico, se evita agregar un segundo error en cascada.
         if first.type in SIMPLE_STARTERS and first.line not in lex_error_lines:
             if last is not None and last.type != 'SEMICOLON':
                 add_syntax_error("falta ';' al final de la instrucción", newline)
                 continue
 
-    # 6. Falta de INDENT después de encabezado con ':'
     for line_tokens in groups:
         first = first_real_token(line_tokens)
         newline = find_newline(line_tokens)
@@ -319,7 +380,6 @@ def precheck_syntax(tokens_list, lexer_errors):
             continue
 
         if first.type in COMPOUND_STARTERS and line_has_type(line_tokens, 'COLON'):
-            # No se valida indentación si esa misma línea ya tenía error.
             if first.line in syntax_error_lines:
                 continue
 
@@ -334,70 +394,84 @@ def precheck_syntax(tokens_list, lexer_errors):
 
 def p_program(p):
     'program : opt_newlines stmt_list opt_newlines'
-    pass
+    #Se agrego
+    p[0] = make_node("Program", statements=p[2] if p[2] is not None else [])
 
 
 def p_opt_newlines(p):
     '''opt_newlines : opt_newlines NEWLINE
                     | empty'''
-    pass
+    #Se agrego
+    p[0] = None
 
 
 def p_stmt_list_multi(p):
     'stmt_list : stmt_list statement'
-    pass
+    #Se agrego
+    p[0] = list(p[1]) if p[1] is not None else []
+    if p[2] is not None:
+        p[0].append(p[2])
 
 
 def p_stmt_list_single(p):
     'stmt_list : statement'
-    pass
+    #Se agrego
+    p[0] = [] if p[1] is None else [p[1]]
 
 
 def p_statement_simple(p):
     '''statement : declaration stmt_end
+                 | const_declaration stmt_end
                  | assignment stmt_end
                  | write_stmt stmt_end
                  | read_stmt stmt_end
                  | return_stmt stmt_end
                  | func_call stmt_end'''
-    pass
+    #Se agrego
+    p[0] = p[1]
 
 
 def p_statement_compound(p):
     '''statement : if_stmt
                  | while_stmt
                  | func_def'''
-    pass
+    #Se agrego
+    p[0] = p[1]
 
 
 def p_statement_blank(p):
     'statement : NEWLINE'
-    pass
+    #Se agrego
+    p[0] = None
 
 
 # Reglas de recuperación para líneas con errores comunes.
 def p_statement_recover_write_missing_rparen(p):
     'statement : WRITE LPAREN args_opt NEWLINE'
-    pass
+    #Se agrego
+    p[0] = None
 
 
 def p_statement_recover_read_missing_rparen(p):
     'statement : READ LPAREN read_args_opt NEWLINE'
-    pass
+    #Se agrego
+    p[0] = None
 
 
 def p_statement_recover_assignment_incomplete(p):
     '''statement : ID ASSIGN expression binary_operator SEMICOLON NEWLINE
                  | type ID ASSIGN expression binary_operator SEMICOLON NEWLINE
                  | RETURN SEMICOLON NEWLINE'''
-    pass
+    #Se agrego
+    p[0] = None
 
 
 def p_stmt_end(p):
     '''stmt_end : SEMICOLON NEWLINE
                 | NEWLINE'''
     # NEWLINE sin ; se permite únicamente como recuperación; el error se agrega en precheck_syntax.
-    pass
+    #Se agrego
+    p[0] = None
 
 
 # =========================
@@ -406,27 +480,42 @@ def p_stmt_end(p):
 
 def p_declaration(p):
     'declaration : type decl_list'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Declaration", line=line, col=col, data_type=p[1], items=p[2], is_const=False)
+
+
+#Se agrego
+def p_const_declaration(p):
+    'const_declaration : CONST type decl_list'
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Declaration", line=line, col=col, data_type=p[2], items=p[3], is_const=True)
 
 
 def p_decl_list_single(p):
     'decl_list : decl_item'
-    pass
+    #Se agrego
+    p[0] = [p[1]]
 
 
 def p_decl_list_multi(p):
     'decl_list : decl_item COMMA decl_list'
-    pass
+    #Se agrego
+    p[0] = [p[1]] + p[3]
 
 
 def p_decl_item_id(p):
     'decl_item : ID'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Declarator", line=line, col=col, name=p[1], value=None)
 
 
 def p_decl_item_assign(p):
     'decl_item : ID ASSIGN expression'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Declarator", line=line, col=col, name=p[1], value=p[3])
 
 
 def p_type(p):
@@ -434,7 +523,8 @@ def p_type(p):
             | FLOAT_TYPE
             | BOOL_TYPE
             | STRING_TYPE'''
-    pass
+    #Se agrego
+    p[0] = normalize_type(p.slice[1].type)
 
 
 # =========================
@@ -443,7 +533,9 @@ def p_type(p):
 
 def p_assignment(p):
     'assignment : ID ASSIGN expression'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Assignment", line=line, col=col, name=p[1], value=p[3])
 
 
 # =========================
@@ -452,55 +544,75 @@ def p_assignment(p):
 
 def p_write_stmt(p):
     'write_stmt : WRITE LPAREN args_opt RPAREN'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Write", line=line, col=col, args=p[3])
 
 
 def p_read_stmt(p):
     'read_stmt : READ LPAREN read_args_opt RPAREN'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Read", line=line, col=col, args=p[3])
 
 
 def p_return_stmt(p):
     'return_stmt : RETURN expression'
     # Importante: no se permite return vacío.
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Return", line=line, col=col, value=p[2])
 
 
 def p_args_opt(p):
     '''args_opt : args
                 | empty'''
-    pass
+    #Se agrego
+    p[0] = p[1] if p[1] is not None else []
 
 
 def p_args_single(p):
     'args : expression'
-    pass
+    #Se agrego
+    p[0] = [p[1]]
 
 
 def p_args_multi(p):
     'args : expression COMMA args'
-    pass
+    #Se agrego
+    p[0] = [p[1]] + p[3]
 
 
 def p_read_args_opt(p):
     '''read_args_opt : read_args
                      | empty'''
-    pass
+    #Se agrego
+    p[0] = p[1] if p[1] is not None else []
 
 
 def p_read_args_single_string(p):
     'read_args : STRING'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = [make_node("Literal", line=line, col=col, value=p[1], data_type="string")]
 
 
 def p_read_args_single_id(p):
     'read_args : ID'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = [make_node("Identifier", line=line, col=col, name=p[1])]
 
 
 def p_read_args_prompt_and_id(p):
     'read_args : STRING COMMA ID'
-    pass
+    #Se agrego
+    line1, col1 = token_line_col(p, 1)
+    line3, col3 = token_line_col(p, 3)
+    p[0] = [
+        make_node("Literal", line=line1, col=col1, value=p[1], data_type="string"),
+        make_node("Identifier", line=line3, col=col3, name=p[3])
+    ]
 
 
 # =========================
@@ -510,34 +622,51 @@ def p_read_args_prompt_and_id(p):
 # Se exige tipo de retorno para evitar ambigüedad en Fase 3.
 def p_func_def(p):
     'func_def : FUNC type ID LPAREN params_opt RPAREN COLON NEWLINE INDENT block DEDENT'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node(
+        "FunctionDef",
+        line=line,
+        col=col,
+        name=p[3],
+        return_type=p[2],
+        params=p[5],
+        body=p[10]
+    )
 
 
 def p_params_opt(p):
     '''params_opt : params
                   | empty'''
-    pass
+    #Se agrego
+    p[0] = p[1] if p[1] is not None else []
 
 
 def p_params_single(p):
     'params : param'
-    pass
+    #Se agrego
+    p[0] = [p[1]]
 
 
 def p_params_multi(p):
     'params : param COMMA params'
-    pass
+    #Se agrego
+    p[0] = [p[1]] + p[3]
 
 
 # Se exigen parámetros tipados para facilitar comprobación posterior de tipos.
 def p_param_typed(p):
     'param : type ID'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 2)
+    p[0] = make_node("Param", line=line, col=col, name=p[2], data_type=p[1])
 
 
 def p_func_call(p):
     'func_call : ID LPAREN args_opt RPAREN'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("FunctionCall", line=line, col=col, name=p[1], args=p[3])
 
 
 # =========================
@@ -546,38 +675,57 @@ def p_func_call(p):
 
 def p_if_stmt(p):
     'if_stmt : IF expression COLON NEWLINE INDENT block DEDENT elif_list else_opt'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node(
+        "If",
+        line=line,
+        col=col,
+        condition=p[2],
+        then_body=p[6],
+        elifs=p[8],
+        else_body=p[9]
+    )
 
 
 def p_elif_list_multi(p):
     'elif_list : elif_list elif_item'
-    pass
+    #Se agrego
+    p[0] = list(p[1]) if p[1] is not None else []
+    if p[2] is not None:
+        p[0].append(p[2])
 
 
 def p_elif_list_empty(p):
     'elif_list : empty'
-    pass
+    #Se agrego
+    p[0] = []
 
 
 def p_elif_item(p):
     'elif_item : ELIF expression COLON NEWLINE INDENT block DEDENT'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Elif", line=line, col=col, condition=p[2], body=p[6])
 
 
 def p_else_opt_block(p):
     'else_opt : ELSE COLON NEWLINE INDENT block DEDENT'
-    pass
+    #Se agrego
+    p[0] = p[5]
 
 
 # Recuperación: else sin ':' para continuar el análisis.
 def p_else_opt_missing_colon(p):
     'else_opt : ELSE NEWLINE INDENT block DEDENT'
-    pass
+    #Se agrego
+    p[0] = p[4]
 
 
 def p_else_opt_empty(p):
     'else_opt : empty'
-    pass
+    #Se agrego
+    p[0] = []
 
 
 # =========================
@@ -586,7 +734,9 @@ def p_else_opt_empty(p):
 
 def p_while_stmt(p):
     'while_stmt : WHILE expression COLON NEWLINE INDENT block DEDENT'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("While", line=line, col=col, condition=p[2], body=p[6])
 
 
 # =========================
@@ -595,12 +745,16 @@ def p_while_stmt(p):
 
 def p_block_multi(p):
     'block : block statement'
-    pass
+    #Se agrego
+    p[0] = list(p[1]) if p[1] is not None else []
+    if p[2] is not None:
+        p[0].append(p[2])
 
 
 def p_block_single(p):
     'block : statement'
-    pass
+    #Se agrego
+    p[0] = [] if p[1] is None else [p[1]]
 
 
 # =========================
@@ -609,17 +763,23 @@ def p_block_single(p):
 
 def p_expression_or(p):
     'expression : expression OR expression'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 2)
+    p[0] = make_node("BinaryOp", line=line, col=col, op="or", left=p[1], right=p[3])
 
 
 def p_expression_and(p):
     'expression : expression AND expression'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 2)
+    p[0] = make_node("BinaryOp", line=line, col=col, op="and", left=p[1], right=p[3])
 
 
 def p_expression_not(p):
     'expression : NOT expression'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("UnaryOp", line=line, col=col, op="not", operand=p[2])
 
 
 def p_expression_compare(p):
@@ -629,7 +789,9 @@ def p_expression_compare(p):
                   | expression LTE expression
                   | expression EQ expression
                   | expression NEQ expression'''
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 2)
+    p[0] = make_node("BinaryOp", line=line, col=col, op=p[2], left=p[1], right=p[3])
 
 
 def p_expression_arith(p):
@@ -638,27 +800,35 @@ def p_expression_arith(p):
                   | expression MULT expression
                   | expression DIV expression
                   | expression MOD expression'''
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 2)
+    p[0] = make_node("BinaryOp", line=line, col=col, op=p[2], left=p[1], right=p[3])
 
 
 def p_expression_group(p):
     'expression : LPAREN expression RPAREN'
-    pass
+    #Se agrego
+    p[0] = p[2]
 
 
 def p_expression_uminus(p):
     'expression : MINUS expression %prec UMINUS'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("UnaryOp", line=line, col=col, op="-", operand=p[2])
 
 
 def p_expression_func_call(p):
     'expression : func_call'
-    pass
+    #Se agrego
+    p[0] = p[1]
 
 
 def p_expression_id(p):
     'expression : ID'
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    p[0] = make_node("Identifier", line=line, col=col, name=p[1])
 
 
 def p_expression_literals(p):
@@ -666,7 +836,10 @@ def p_expression_literals(p):
                   | FLOAT
                   | STRING
                   | BOOL'''
-    pass
+    #Se agrego
+    line, col = token_line_col(p, 1)
+    value, data_type = normalize_literal(p.slice[1].type, p[1])
+    p[0] = make_node("Literal", line=line, col=col, value=value, data_type=data_type)
 
 
 def p_binary_operator(p):
@@ -683,7 +856,8 @@ def p_binary_operator(p):
                        | NEQ
                        | AND
                        | OR'''
-    pass
+    #Se agrego
+    p[0] = p[1]
 
 
 # =========================
@@ -692,7 +866,8 @@ def p_binary_operator(p):
 
 def p_empty(p):
     'empty :'
-    pass
+    #Se agrego
+    p[0] = None
 
 
 # =========================
@@ -702,7 +877,6 @@ def p_empty(p):
 def p_error(p):
     if p:
         line = getattr(p, 'lineno', '?')
-        # Evitar duplicar errores que ya fueron reportados por recuperación o por el lexer.
         if isinstance(line, int) and (line in syntax_error_lines or line in lex_error_lines):
             return
         add_syntax_error("error sintáctico", p)
@@ -724,7 +898,12 @@ def get_parser():
     return _parser
 
 
-def run_parser(text):
+#Se agrego
+def run_parser_with_ast(text):
+    """
+    Ejecuta lexer + parser y devuelve también el AST.
+    Esta función será usada por Fase 3.
+    """
     global syntax_errors, syntax_error_keys, syntax_error_lines, lex_error_lines
 
     syntax_errors = []
@@ -739,9 +918,30 @@ def run_parser(text):
 
     adapter = PlyTokenAdapter(tokens_list)
     parser = get_parser()
-    parser.parse(lexer=adapter, tracking=True)
+    ast = parser.parse(lexer=adapter, tracking=True)
 
-    return lexer.errors, syntax_errors
+    return lexer.errors, syntax_errors, ast
+
+
+def run_parser(text, include_ast=False):
+    """
+    Ejecuta el parser.
+
+    Por compatibilidad con el minilang.py actual, por defecto devuelve:
+        lexer.errors, syntax_errors
+
+    Para Fase 3 se puede usar:
+        run_parser(text, include_ast=True)
+    y devuelve:
+        lexer.errors, syntax_errors, ast
+    """
+    #Se agrego
+    lex_errors, syn_errors, ast = run_parser_with_ast(text)
+
+    if include_ast:
+        return lex_errors, syn_errors, ast
+
+    return lex_errors, syn_errors
 
 
 def process_file(filename):
@@ -784,6 +984,34 @@ def process_file(filename):
     print(f"  → salida generada: {out_file}")
 
 
+#Se agrego
+def process_file_with_ast_debug(filename):
+    """
+    Utilidad opcional para revisar rápidamente si el AST se está construyendo.
+    No es necesario usarla en la entrega final.
+    """
+    if not filename.endswith(".mlng"):
+        print(f"  Error: el archivo '{filename}' no tiene extensión .mlng")
+        return
+
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            text = f.read()
+    except Exception as e:
+        print(f"  Error al leer {filename}: {e}")
+        return
+
+    lex_errors, syn_errors, ast = run_parser(text, include_ast=True)
+
+    if lex_errors or syn_errors:
+        print("No se muestra AST porque hay errores léxicos o sintácticos.")
+        for err in lex_errors + syn_errors:
+            print(err)
+        return
+
+    print(ast)
+
+
 def process_all_files():
     files = sorted(f for f in os.listdir() if f.endswith(".mlng"))
 
@@ -796,17 +1024,21 @@ def process_all_files():
 
 
 def main():
-    print("Proyecto - Fase 2 - Analizador Sintáctico Ascendente MiniLang")
-    print("-------------------------------------------------------------\n")
+    print("Proyecto - Fase 2/Fase 3 - Analizador Sintáctico Ascendente MiniLang")
+    print("---------------------------------------------------------------------\n")
 
     # Modos de uso:
     #   python parserMinilang.py archivo.mlng
     #   python parserMinilang.py --all
+    #   python parserMinilang.py --ast archivo.mlng
     #   python parserMinilang.py    -> solicita archivo
     if len(sys.argv) > 1:
         arg = sys.argv[1]
         if arg == "--all":
             process_all_files()
+        #Se agrego
+        elif arg == "--ast" and len(sys.argv) > 2:
+            process_file_with_ast_debug(sys.argv[2])
         else:
             process_file(arg)
     else:

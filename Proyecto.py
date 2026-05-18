@@ -11,8 +11,11 @@ KEYWORDS = {
     "else": "ELSE",
     "while": "WHILE",
 
+    "const": "CONST",
+
     "int": "INT_TYPE",
     "float": "FLOAT_TYPE",
+    "double": "FLOAT_TYPE",
     "bool": "BOOL_TYPE",
     "string": "STRING_TYPE",
 

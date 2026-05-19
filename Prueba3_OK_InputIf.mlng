@@ -1,0 +1,15 @@
+# Prueba 3: Entrada de datos y decision con if/elif/else
+int edad;
+bool mayor;
+
+Write("Ingrese su edad:");
+Read(edad);
+
+mayor = edad >= 18;
+
+if mayor:
+    Write("Mayor de edad");
+elif edad == 17:
+    Write("Casi mayor de edad");
+else:
+    Write("Menor de edad");

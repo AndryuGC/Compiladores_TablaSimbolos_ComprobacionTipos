@@ -1,0 +1,8 @@
+# Prueba 7: Error sintactico
+int edad
+edad = 20;
+
+if edad >= 18
+    Write("Mayor de edad");
+
+Write("Falta cerrar parentesis";

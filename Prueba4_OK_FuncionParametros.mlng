@@ -1,0 +1,19 @@
+# Prueba 4: Funcion con parametros y retorno
+def int sumar(int x, int y):
+    int total;
+    total = x + y;
+    return total;
+
+def int multiplicar(int a, int b):
+    int producto;
+    producto = a * b;
+    return producto;
+
+int resultadoSuma;
+int resultadoProducto;
+
+resultadoSuma = sumar(12, 8);
+resultadoProducto = multiplicar(resultadoSuma, 3);
+
+Write(resultadoSuma);
+Write(resultadoProducto);

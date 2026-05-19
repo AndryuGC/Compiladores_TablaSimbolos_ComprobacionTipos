@@ -1,0 +1,11 @@
+# Prueba 2: Operaciones aritmeticas y asignaciones
+int a, b, resultado;
+float promedio;
+
+a = 10;
+b = 5;
+resultado = a + b * 2;
+promedio = resultado / 2.0;
+
+Write(resultado);
+Write(promedio);

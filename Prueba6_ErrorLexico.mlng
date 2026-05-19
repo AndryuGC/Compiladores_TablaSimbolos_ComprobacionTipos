@@ -1,0 +1,9 @@
+# Prueba 6: Error lexico
+int valor;
+valor = 12..3;
+
+string nombre;
+nombre = "Andry;
+
+int numero;
+numero = 10 @ 2;

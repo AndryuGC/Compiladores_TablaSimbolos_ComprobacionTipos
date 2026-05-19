@@ -1,0 +1,10 @@
+# Prueba 1: Hola Mundo y salida básica
+Write("Hola Mundo");
+
+string curso;
+curso = "Compiladores";
+Write(curso);
+
+int anio;
+anio = 2026;
+Write(anio);

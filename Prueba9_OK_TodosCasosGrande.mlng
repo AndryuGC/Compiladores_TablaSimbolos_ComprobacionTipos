@@ -1,0 +1,50 @@
+# Prueba 9: Programa grande correcto con varias funciones, if, while y tipos
+Write("Inicio del programa grande");
+
+def int sumar(int a, int b):
+    int resultado;
+    resultado = a + b;
+    return resultado;
+
+def int calcularTotal(int base, int extra):
+    int total;
+    total = sumar(base, extra);
+    total = total * 2;
+    return total;
+
+def bool esAprobado(float nota):
+    bool resultado;
+    resultado = nota >= 61.0;
+    return resultado;
+
+int base;
+int extra;
+int totalGeneral;
+float notaFinal;
+bool aprobado;
+string estudiante;
+
+base = 25;
+extra = 15;
+notaFinal = 82.5;
+estudiante = "Andry";
+
+totalGeneral = calcularTotal(base, extra);
+aprobado = esAprobado(notaFinal);
+
+Write(estudiante);
+Write(totalGeneral);
+
+if aprobado:
+    Write("Estudiante aprobado");
+else:
+    Write("Estudiante no aprobado");
+
+int contador;
+contador = 0;
+
+while contador < 3:
+    Write(contador);
+    contador = contador + 1;
+
+Write("Fin del programa grande");

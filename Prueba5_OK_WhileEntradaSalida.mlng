@@ -1,0 +1,17 @@
+# Prueba 5: Variables, entrada, salida y ciclo while
+int limite;
+int contador;
+int acumulado;
+
+Write("Ingrese un limite:");
+Read(limite);
+
+contador = 0;
+acumulado = 0;
+
+while contador < limite:
+    acumulado = acumulado + contador;
+    Write(contador);
+    contador = contador + 1;
+
+Write(acumulado);
